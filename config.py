@@ -11,6 +11,8 @@ class Config:
     TESTING = False
 
     JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")
+    TOKEN_EXPIRE_HOURS = 0
+    TOKEN_EXPIRE_MINUTES = 0
 
     SQLALCHEMY_DATABASE_URI = "sqlite:///flask_social.db"
 
@@ -41,6 +43,8 @@ class DevelopmentConfig(Config):
 
     DEBUG = True
 
+    TOKEN_EXPIRE_MINUTES = 15
+
 
 class TestingConfig(Config):
     """Config for testing application
@@ -56,7 +60,7 @@ class ProductionConfig(Config):
     """Config for production environment
     """
 
-    pass
+    TOKEN_EXPIRE_HOURS = 1
 
 
 config_map = {
