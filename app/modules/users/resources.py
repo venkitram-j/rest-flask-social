@@ -1,86 +1,125 @@
-"""Business logic for /auth API endpoints."""
-from http import HTTPStatus
-
-from flask import current_app, jsonify, views
-from flask_smorest import abort, Blueprint
-
-from app import db
-from .models import User
-from .parameters import (
-    UserRegistrationParamter, 
-    UserLoginParameter
+"""
+User/Authentication endpoints
+"""
+from flask import request, current_app
+from flask.views import MethodView
+from flask_smorest import abort, Page
+from flask_jwt_extended import (
+    get_jwt,
+    jwt_required,
+    create_access_token, 
+    create_refresh_token, 
+    get_jwt_identity
 )
 
+from app.extensions.api import CustomBlueprint
+from .models import User, TokenBlocklist
+from .parameters import (
+    UserRegistrationParameter, 
+    UserLoginParameter
+)
+from .schemas import UserSchema
 
-user_blp = Blueprint("Users", __name__)
+
+blp = CustomBlueprint("Users", __name__)
 
 
-def _get_token_expire_time():
-    token_age_h = current_app.config.get("TOKEN_EXPIRE_HOURS")
-    token_age_m = current_app.config.get("TOKEN_EXPIRE_MINUTES")
-    expires_in_seconds = token_age_h * 3600 + token_age_m * 60
-    return expires_in_seconds if not current_app.config["TESTING"] else 5
-
-def _create_auth_successful_response(token, status_code, message):
-    response = jsonify(
-        status="success",
-        message=message,
-        access_token=token,
-        token_type="bearer",
-        expires_in=_get_token_expire_time(),
-    )
-    response.status_code = status_code
-    response.headers["Cache-Control"] = "no-store"
-    response.headers["Pragma"] = "no-cache"
-    return response
-
-@user_blp.route("/register")
-class RegisterUser(views.MethodView):
-    """Handles HTTP requests to URL: /api/v1/auth/register."""
-
-    @user_blp.arguments(UserRegistrationParamter)
-    def post(self, request_data):
-        """Register a new user and return an access token."""
-
-        email = request_data.get("email")
-        password = request_data.get("password")
-        admin = request_data.get("admin")
-
-        if User.find_by_email(email):
-            abort(HTTPStatus.BAD_REQUEST, status="fail", message=f"{email} is already registered")
+@blp.route("/")
+class Users(MethodView):
+    
+    @blp.doc(security=[{"jwt": []}])
+    @jwt_required()
+    @blp.response(200, UserSchema(many=True))
+    @blp.paginate()
+    def get(self):
+        """
+        Get list of paginated users
+        """
         
-        new_user = User(email=email, password=password, admin=admin)
-        db.session.add(new_user)
-        db.session.commit()
-
-        access_token = new_user.encode_access_token()
-
-        return _create_auth_successful_response(
-            token=access_token,
-            status_code=HTTPStatus.CREATED,
-            message="Successfully registered",
-        )
-
-
-@user_blp.route("/login")
-class LoginUser(views.MethodView):
-    """Handles HTTP requests to URL: /api/v1/auth/login."""
-
-    @user_blp.arguments(UserLoginParameter)
-    def post(self, request_data):
-        """Authenticate an existing user and return an access token."""
-
-        email = request_data.get("email")
-        password = request_data.get("password")
-
-        user = User.find_by_email(email)
-        if not user or not user.check_password(password):
-            abort(HTTPStatus.UNAUTHORIZED, message="Invalid Credentials", status="fail")
+        page = request.args.get("page", default=1, type=int)
+        page_size = request.args.get("page_size", default=current_app.config["DEFAULT_PAGE_SIZE"], type=int)
         
-        access_token = user.encode_access_token()
+        claims = get_jwt()
+        
+        if claims.get("is_admin"):
+            return User.query.paginate(page=page, per_page=page_size)
+        
+        return User.query.filter_by(is_admin=False).paginate(page=page, per_page=page_size)
+        
 
-        return _create_auth_successful_response(
-            token=access_token,
-            status_code=HTTPStatus.OK,
-            message="Successfully logged in",
+@blp.route("/register")
+class RegisterUser(MethodView):
+
+    @blp.arguments(UserRegistrationParameter)
+    def post(self, request_data):
+        """
+        Create a new user
+        """
+
+        user = User.get_user_by_email(email=request_data.get("email"))
+        
+        if user is not None:
+            abort(409, message="A user with that email already exists!!")
+
+        new_user = User(
+            email=request_data["email"],
+            first_name=request_data["first_name"],
+            last_name=request_data["last_name"],
+            is_admin=request_data["is_admin"]
         )
+        new_user.set_password(password=request_data["password"])
+        new_user.save()
+
+        return {"message": "User created successfully."}, 201
+
+
+@blp.route("/login")
+class LoginUser(MethodView):
+
+    @blp.arguments(UserLoginParameter)
+    def post(self, request_data):
+        """
+        Authenticate an existing user and return an access token.
+        """
+
+        user = User.get_user_by_email(email=request_data.get("email"))
+
+        if user and user.check_password(password=request_data["password"]):
+            access_token = create_access_token(identity=user.email)
+            refresh_token = create_refresh_token(identity=user.email)
+            return {"access_token": access_token, "refresh_token": refresh_token}, 200
+
+        abort(401, message="Invalid credentials.")
+
+
+@blp.get("/refresh")
+class RefreshToken(MethodView):
+
+    @jwt_required(refresh=True)
+    def post(self):
+        """
+        Accept a refresh token to generate a new access token
+        """
+        
+        identity = get_jwt_identity()
+        new_access_token = create_access_token(identity=identity)
+        
+        return {"access_token": new_access_token}, 200
+
+
+@blp.route("/logout")
+class LogoutView(MethodView):
+    
+    @blp.doc(security=[{"jwt": []}])
+    @jwt_required(verify_type=False)
+    def post(self):
+        """
+        User logout
+        """
+        
+        jwt = get_jwt()["jti"]
+        token = TokenBlocklist(jti=jwt)
+        token_type = jwt["type"]
+        token.save()
+
+        return {"message": f"{token_type} token revoked successfully."}, 200

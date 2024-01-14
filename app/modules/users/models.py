@@ -1,99 +1,72 @@
-"""Class definition for User model."""
-import jwt
+"""User models."""
+import uuid
+import datetime
 
-from uuid import uuid4
-from flask import current_app
-from datetime import datetime, timedelta, timezone
-from sqlalchemy.ext.hybrid import hybrid_property
-from werkzeug.security import generate_password_hash, check_password_hash
-
-from app import db
-from app.utils.datetime_util import (
-    utc_now,
-    get_local_utcoffset,
-    make_tzaware,
-    localized_dt_string,
+from werkzeug.security import (
+    generate_password_hash,
+    check_password_hash
 )
-from app.utils.result import Result
+
+from app.extensions.flask_sqlalchemy import db
 
 
 class User(db.Model):
-    """User model for storing logon credentials and other details."""
+    """
+    Model for storing user details
+    """
 
-    __tablename__ = "site_user"
+    __tablename__ = "user"
 
-    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    email = db.Column(db.String(255), unique=True, nullable=False)
-    password_hash = db.Column(db.String(100), nullable=False)
-    registered_on = db.Column(db.DateTime, default=utc_now)
-    admin = db.Column(db.Boolean, default=False)
-    public_id = db.Column(db.String(36), unique=True, default=lambda: str(uuid4()))
+    id = db.Column(db.String(36), primary_key=True, index=True, default=lambda: str(uuid.uuid4()))
+    email = db.Column(db.String(255), unique=True, index=True, nullable=False)
+    password = db.Column(db.String(100), nullable=False)
+    first_name = db.Column(db.String(100), nullable=False)
+    last_name = db.Column(db.String(100), nullable=False)
+    is_admin = db.Column(db.Boolean, nullable=False, default=False)
+    registered_on = db.Column(db.DateTime, default=datetime.datetime.utcnow)
 
     def __repr__(self):
+        """
+        The __repr__ function is used to return a string representation of the object
+        """
         return (
-            f"<User email={self.email}, public_id={self.public_id}, admin={self.admin}>"
+            f"<User email={self.email}, admin={self.admin}>"
         )
-
-    @hybrid_property
-    def registered_on_str(self):
-        registered_on_utc = make_tzaware(
-            self.registered_on, use_tz=timezone.utc, localize=False
-        )
-        return localized_dt_string(registered_on_utc, use_tz=get_local_utcoffset())
-
-    @property
-    def password(self):
-        raise AttributeError("password: write-only field")
-
-    @password.setter
-    def password(self, password):
-        self.password_hash = generate_password_hash(password)
+    
+    def set_password(self, password):
+        self.password = generate_password_hash(password)
 
     def check_password(self, password):
-        return check_password_hash(self.password_hash, password)
+        return check_password_hash(self.password, password)
 
     @classmethod
-    def find_by_email(cls, email):
+    def get_user_by_email(cls, email):
         return cls.query.filter_by(email=email).first()
 
-    @classmethod
-    def find_by_public_id(cls, public_id):
-        return cls.query.filter_by(public_id=public_id).first()
+    def save(self):
+        db.session.add(self)
+        db.session.commit()
+
+    def delete(self):
+        db.session.delete(self)
+        db.session.commit()
+
     
-    def encode_access_token(self):
-        now = datetime.now(timezone.utc)
-        token_age_h = current_app.config.get("TOKEN_EXPIRE_HOURS")
-        token_age_m = current_app.config.get("TOKEN_EXPIRE_MINUTES")
-        expire = now + timedelta(hours=token_age_h, minutes=token_age_m)
-        if current_app.config["TESTING"]:
-            expire = now + timedelta(seconds=5)
-        payload = dict(exp=expire, iat=now, sub=self.public_id, admin=self.admin)
-        key = current_app.config.get("JWT_SECRET_KEY")
-        return jwt.encode(payload, key, algorithm="HS256")
+class TokenBlocklist(db.Model):
+    """
+    Model for storing tokens invalidated 
+    during logout
+    """
     
-    @staticmethod
-    def decode_access_token(access_token):
-        if isinstance(access_token, bytes):
-            access_token = access_token.decode("ascii")
-        if access_token.startswith("Bearer "):
-            split = access_token.split("Bearer")
-            access_token = split[1].strip()
-        try:
-            key = current_app.config.get("SECRET_KEY")
-            payload = jwt.decode(access_token, key, algorithms=["HS256"])
-        except jwt.ExpiredSignatureError:
-            error = "Access token expired. Please log in again."
-            return Result.Fail(error)
-        except jwt.InvalidTokenError:
-            error = "Invalid token. Please log in again."
-            return Result.Fail(error)
+    __tablename__ = "token_blocklist"
+    
+    id = db.Column(db.Integer(), primary_key=True)
+    jti = db.Column(db.String(), nullable=True)
+    create_at = db.Column(db.DateTime(), default=datetime.datetime.utcnow)
 
-        user_dict = dict(
-            public_id=payload["sub"],
-            admin=payload["admin"],
-            token=access_token,
-            expires_at=payload["exp"],
-        )
-        return Result.Ok(user_dict)
-
-
+    def __repr__(self):
+        return f"<Token {self.jti}>"
+    
+    def save(self):
+        db.session.add(self)
+        db.session.commit()

@@ -1,10 +1,12 @@
-"""Config settings for app
+"""
+Config settings for app
 """
 import os
 
 
 class Config:
-    """Base Config
+    """
+    Base Config
     """
 
     DEBUG = False
@@ -32,13 +34,14 @@ class Config:
     }
 
     OPENAPI_VERSION = "3.0.2"
-    OPENAPI_URL_PREFIX = "/"
+    OPENAPI_URL_PREFIX = "/" if os.getenv("FLASK_DEBUG") else None
     OPENAPI_SWAGGER_UI_PATH = "/docs"
     OPENAPI_SWAGGER_UI_URL = "https://cdn.jsdelivr.net/npm/swagger-ui-dist/"
 
 
 class DevelopmentConfig(Config):
-    """Config for development environment
+    """app/extensions/__init__.py
+    Config for development environment
     """
 
     DEBUG = True
@@ -47,7 +50,8 @@ class DevelopmentConfig(Config):
 
 
 class TestingConfig(Config):
-    """Config for testing application
+    """
+    Config for testing application
     """
 
     DEBUG = True
@@ -57,7 +61,8 @@ class TestingConfig(Config):
 
 
 class ProductionConfig(Config):
-    """Config for production environment
+    """
+    Config for production environment
     """
 
     TOKEN_EXPIRE_HOURS = 1

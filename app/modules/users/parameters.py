@@ -1,16 +1,18 @@
-from marshmallow import fields, Schema
+from marshmallow import fields, Schema, validate
 
 
 class UserLoginParameter(Schema):
-    """Parameters for user login request
+    """
+    Parameters for user login request
     """
     
     email = fields.Email(required=True)
-    password = fields.Str(required=True)
+    password = fields.Str(required=True, validate=validate.Length(min=6))
 
 
-class UserRegistrationParamter(UserLoginParameter):
-    """Parameters for user registration request
+class UserRegistrationParameter(UserLoginParameter):
+    """
+    Parameters for user registration request
     """
 
-    admin = fields.Bool(load_default=False)
+    is_admin = fields.Bool(load_default=False)
